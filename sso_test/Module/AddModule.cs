@@ -1,4 +1,5 @@
 ﻿using Microsoft.EntityFrameworkCore;
+using OpenIddict.Abstractions;
 using SqlSugar;
 using sso_test.Process;
 
@@ -33,6 +34,13 @@ public static class AddModule
                 options.SetTokenEndpointUris("/connect/token");
                 options.AllowPasswordFlow()
                        .AllowRefreshTokenFlow(); // 有了数据库，终于可以开启刷新令牌了！
+
+                options.RegisterScopes(
+                    OpenIddictConstants.Scopes.OpenId,      // 必须，用于签发 id_token
+                    OpenIddictConstants.Scopes.Profile,     // 可选，用于基本资料
+                    OpenIddictConstants.Scopes.OfflineAccess, // 必须，用于签发 refresh_token
+                    OpenIddictConstants.Scopes.Roles        // 可选，用于角色
+    );
 
                 options.AcceptAnonymousClients();
                 options.AddDevelopmentEncryptionCertificate()

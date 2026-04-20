@@ -26,58 +26,56 @@ namespace sso_test.Controllers
             var request = HttpContext.GetOpenIddictServerRequest() ??
                 throw new InvalidOperationException("无法获取 OpenID Connect 请求信息。");
 
+            // 情况 A：密码模式
             if (request.IsPasswordGrantType())
             {
-                var user = await _db.Queryable<Sysuser>()
-                                    .FirstAsync(u => u.Username == request.Username);
+                var user = await _db.Queryable<Sysuser>().FirstAsync(u => u.Username == request.Username);
 
                 if (user == null || user.Password != request.Password)
                 {
-                    var properties = new AuthenticationProperties(new Dictionary<string, string>
+                    return Forbid(new AuthenticationProperties(new Dictionary<string, string>
                     {
                         [OpenIddictServerAspNetCoreConstants.Properties.Error] = OpenIddictConstants.Errors.InvalidGrant,
                         [OpenIddictServerAspNetCoreConstants.Properties.ErrorDescription] = "用户名或密码错误。"
-                    });
-                    return Forbid(properties, OpenIddictServerAspNetCoreDefaults.AuthenticationScheme);
+                    }), OpenIddictServerAspNetCoreDefaults.AuthenticationScheme);
                 }
 
-                // 4. 验证通过，创建身份声明 (Claims)
-                var identity = new ClaimsIdentity(
-                    authenticationType: OpenIddictServerAspNetCoreDefaults.AuthenticationScheme, // 使用官方默认方案名
-                    nameType: OpenIddictConstants.Claims.Name,
-                    roleType: OpenIddictConstants.Claims.Role);
+                var identity = new ClaimsIdentity(OpenIddictServerAspNetCoreDefaults.AuthenticationScheme,
+                                                  OpenIddictConstants.Claims.Name,
+                                                  OpenIddictConstants.Claims.Role);
 
-                // Subject (sub) 是必须的
-                identity.AddClaim(OpenIddictConstants.Claims.Subject, user.Id.ToString());
-                identity.AddClaim(OpenIddictConstants.Claims.Name, user.Username);
-                identity.AddClaim(OpenIddictConstants.Claims.Role, "Admin");
+                identity.AddClaim(OpenIddictConstants.Claims.Subject, user.Id.ToString(), OpenIddictConstants.Destinations.AccessToken);
+                identity.AddClaim(OpenIddictConstants.Claims.Name, user.Username, OpenIddictConstants.Destinations.AccessToken);
 
-                // 【关键修改点 1】：遍历所有声明，显式授予它们进入 AccessToken 的权限
-                // 这样即使不依赖 Scope 过滤，Payload 里也一定会有数据
-                foreach (var claim in identity.Claims)
-                {
-                    claim.SetDestinations(OpenIddictConstants.Destinations.AccessToken);
-                }
+                // 保证刷新时这些 Claim 依然能进 AccessToken
+                foreach (var claim in identity.Claims) claim.SetDestinations(OpenIddictConstants.Destinations.AccessToken);
 
                 var principal = new ClaimsPrincipal(identity);
-
-                // 【关键修改点 2】：确保 Scopes 被正确处理
-                // 如果客户端请求了特定的 scope，这里要通过；如果没有，这里至少要给个默认值
-                var scopes = request.GetScopes();
-                if (!scopes.Any())
-                {
-                    // 如果请求没带 scope，手动赋予基础 scope，否则有些 Claim 可能会被系统屏蔽
-                    principal.SetScopes(OpenIddictConstants.Scopes.OpenId, OpenIddictConstants.Scopes.Profile);
-                }
-                else
-                {
-                    principal.SetScopes(scopes);
-                }
+                principal.SetScopes(request.GetScopes());
 
                 return SignIn(principal, OpenIddictServerAspNetCoreDefaults.AuthenticationScheme);
             }
 
-            return BadRequest(new { error = "unsupported_grant_type", description = "只支持密码模式。" });
+            // 情况 B：刷新令牌模式
+            if (request.IsRefreshTokenGrantType())
+            {
+                // 重点：AuthenticateAsync 会从数据库里捞出之前那个 SignIn 存进去的 Principal
+                var result = await HttpContext.AuthenticateAsync(OpenIddictServerAspNetCoreDefaults.AuthenticationScheme);
+
+                if (!result.Succeeded || result.Principal == null)
+                {
+                    return Forbid(new AuthenticationProperties(new Dictionary<string, string>
+                    {
+                        [OpenIddictServerAspNetCoreConstants.Properties.Error] = OpenIddictConstants.Errors.InvalidGrant,
+                        [OpenIddictServerAspNetCoreConstants.Properties.ErrorDescription] = "刷新令牌无效。"
+                    }), OpenIddictServerAspNetCoreDefaults.AuthenticationScheme);
+                }
+
+                // 重新签发时，OpenIddict 默认会保留之前的 Claims，直接 SignIn 即可
+                return SignIn(result.Principal, OpenIddictServerAspNetCoreDefaults.AuthenticationScheme);
+            }
+
+            return BadRequest(new { error = "unsupported_grant_type" });
         }
     }
 
