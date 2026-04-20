@@ -1,0 +1,6 @@
+@sso_test_HostAddress = http://localhost:5010
+
+GET {{sso_test_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

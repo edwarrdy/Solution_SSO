@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="sso_test/sso_test.csproj" />
+  <Project Path="user_api/user_api.csproj" />
+</Solution>
